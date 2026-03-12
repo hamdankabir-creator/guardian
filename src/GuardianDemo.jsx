@@ -64,15 +64,10 @@ IF IGNORING: one gentle peer-voice question. Not advice. Makes them pause.
 
 Respond ONLY with JSON: { "outcome": "heeding"|"ignoring", "text": "..." }`;
 
-async function callClaude(apiKey, system, userContent, maxTokens = 600) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+async function callClaude(system, userContent, maxTokens = 600) {
+  const res = await fetch("/api/claude", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: maxTokens,
@@ -86,7 +81,7 @@ async function callClaude(apiKey, system, userContent, maxTokens = 600) {
   catch { const m = raw.match(/\{[\s\S]*?\}/); return m ? JSON.parse(m[0]) : null; }
 }
 
-async function analyzeMessage(apiKey, messages, newMessage, threatHistory, currentHighestLevel) {
+async function analyzeMessage(messages, newMessage, threatHistory, currentHighestLevel) {
   const turnCount = messages.filter(m => m.from === "sender").length + 1;
   const recentHistory = messages.slice(-10)
     .map(m => `${m.from === "sender" ? "Contact" : "Child"}: ${m.text}`).join("\n");
@@ -100,8 +95,8 @@ async function analyzeMessage(apiKey, messages, newMessage, threatHistory, curre
   const prompt = `${threatBlock}\n\nRecent conversation:\n${recentHistory || "(none)"}\n\nNew message: "${newMessage}"\n\nRate in context of full arc.`;
 
   const [predator, bully] = await Promise.all([
-    callClaude(apiKey, GUARDIAN_SYSTEM_PROMPT, prompt),
-    callClaude(apiKey, BULLY_SYSTEM_PROMPT, prompt),
+    callClaude(GUARDIAN_SYSTEM_PROMPT, prompt),
+    callClaude(BULLY_SYSTEM_PROMPT, prompt),
   ]);
 
   const pr = THREAT_RANK[predator?.threat_level] ?? 0;
@@ -110,7 +105,7 @@ async function analyzeMessage(apiKey, messages, newMessage, threatHistory, curre
   return winner;
 }
 
-async function evaluateKidReply(apiKey, conversationHistory, kidReply) {
+async function evaluateKidReply(conversationHistory, kidReply) {
   const recentNudge = [...conversationHistory].reverse()
     .find(m => m.from === "sender" && m.analysis?.kid_nudge);
   const history = conversationHistory.slice(-8)
@@ -119,7 +114,7 @@ async function evaluateKidReply(apiKey, conversationHistory, kidReply) {
     ? `Guardian asked: "${recentNudge.analysis.kid_nudge}"`
     : `Guardian flagged this conversation as suspicious.`;
   const prompt = `${nudgeLine}\n\nRecent:\n${history}\n\nChild just replied: "${kidReply}"\n\nHeed or ignore?`;
-  const result = await callClaude(apiKey, REACTION_SYSTEM_PROMPT, prompt, 120);
+  const result = await callClaude(REACTION_SYSTEM_PROMPT, prompt, 120);
   return { heeding: result?.outcome === "heeding", text: result?.text?.trim() || "" };
 }
 
@@ -263,79 +258,6 @@ function KudosPill({ text }) {
   );
 }
 
-// ── Key Gate ─────────────────────────────────────────────────────────────────
-
-function KeyGate({ onUnlock }) {
-  const [val, setVal] = useState("");
-  const [err, setErr] = useState("");
-  const [testing, setTesting] = useState(false);
-
-  const test = async () => {
-    if (!val.trim()) return;
-    setTesting(true); setErr("");
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": val.trim(),
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 10,
-          messages: [{ role: "user", content: "hi" }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) { setErr(data.error.message || "Invalid key"); }
-      else { onUnlock(val.trim()); }
-    } catch { setErr("Network error — check your connection."); }
-    setTesting(false);
-  };
-
-  return (
-    <div style={{
-      height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "#0f172a", fontFamily: "'DM Sans', system-ui, sans-serif",
-    }}>
-      <div style={{
-        background: "#111827", border: "1px solid #1e293b", borderRadius: 20,
-        padding: "40px 36px", width: 380, textAlign: "center",
-      }}>
-        <Shield color="#14b8a6" size={36} />
-        <h2 style={{ color: "#f1f5f9", fontSize: 20, fontWeight: 700, margin: "16px 0 6px" }}>Guardian Playground</h2>
-        <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6, marginBottom: 28 }}>
-          Enter your Anthropic API key to run the Guardian AI locally.<br/>
-          <span style={{ color: "#334155" }}>Key stays in memory — never stored.</span>
-        </p>
-        <input
-          type="password"
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && test()}
-          placeholder="sk-ant-..."
-          style={{
-            width: "100%", background: "#1e293b", border: `1px solid ${err ? "#ef4444" : "#334155"}`,
-            borderRadius: 10, color: "#f1f5f9", fontSize: 14,
-            padding: "11px 14px", fontFamily: "monospace", marginBottom: 12,
-          }}
-        />
-        {err && <p style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, textAlign: "left" }}>{err}</p>}
-        <button onClick={test} disabled={testing || !val.trim()} style={{
-          width: "100%", background: val.trim() && !testing ? "#14b8a6" : "#1e293b",
-          border: "none", borderRadius: 10, color: "white", fontSize: 14, fontWeight: 600,
-          padding: "11px", cursor: val.trim() && !testing ? "pointer" : "not-allowed",
-          transition: "background 0.2s",
-        }}>
-          {testing ? "Checking…" : "Start Guardian →"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── Main Demo ─────────────────────────────────────────────────────────────────
 
 const CSS = `
@@ -350,7 +272,7 @@ const CSS = `
   @keyframes ripple { 0%{transform:scale(0.8);opacity:0.4} 100%{transform:scale(2.2);opacity:0} }
 `;
 
-function Demo({ apiKey, onClearKey }) {
+function Demo() {
   const [messages,    setMessages]    = useState([]);
   const [senderInput, setSenderInput] = useState("");
   const [kidInput,    setKidInput]    = useState("");
@@ -381,7 +303,7 @@ function Demo({ apiKey, onClearKey }) {
     setMessages(prev => [...prev, { id, from: "sender", text, analyzing: true, analysis: null, showCard: false, showRepeat: false, showCaution: false }]);
 
     try {
-      const analysis = await analyzeMessage(apiKey, messages, text, threatHistory.current, highestLevel.current);
+      const analysis = await analyzeMessage(messages, text, threatHistory.current, highestLevel.current);
       const level = analysis?.threat_level || "safe";
       const rank  = THREAT_RANK[level] ?? 0;
 
@@ -420,7 +342,7 @@ function Demo({ apiKey, onClearKey }) {
     if (warningActive) {
       setMessages(prev => prev.map(m => m.id === id ? { ...m, regretNudge: true, regretText: null } : m));
       const snap = await new Promise(res => setMessages(prev => { res(prev); return prev; }));
-      const { heeding, text: rt } = await evaluateKidReply(apiKey, snap, text);
+      const { heeding, text: rt } = await evaluateKidReply(snap, text);
       if (heeding) {
         setMessages(prev => prev.map(m => m.id === id ? { ...m, regretNudge: false, kudos: true, kudosText: rt || "smart move" } : m));
       } else {
@@ -452,10 +374,7 @@ function Demo({ apiKey, onClearKey }) {
               <div style={{ fontSize: 15, fontWeight: 600, color: "#f1f5f9" }}>Marcus_R27</div>
               <div style={{ fontSize: 11, color: "#64748b" }}>Unknown contact · Sending to: Jamie</div>
             </div>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-              <button onClick={onClearKey} style={{ background: "none", border: "1px solid #1e293b", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#475569", cursor: "pointer" }}>change key</button>
-              <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#94a3b8" }}>SENDER VIEW</div>
-            </div>
+            <div style={{ marginLeft: "auto", background: "#1e293b", border: "1px solid #334155", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#94a3b8" }}>SENDER VIEW</div>
           </div>
         </div>
 
@@ -641,18 +560,5 @@ function Demo({ apiKey, onClearKey }) {
 }
 
 export default function App() {
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("guardian_api_key") || "");
-
-  const handleUnlock = (key) => {
-    localStorage.setItem("guardian_api_key", key);
-    setApiKey(key);
-  };
-
-  const handleClear = () => {
-    localStorage.removeItem("guardian_api_key");
-    setApiKey("");
-  };
-
-  if (!apiKey) return <KeyGate onUnlock={handleUnlock} />;
-  return <Demo apiKey={apiKey} onClearKey={handleClear} />;
+  return <Demo />;
 }
