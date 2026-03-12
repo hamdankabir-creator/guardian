@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
 const THREAT_RANK = { safe: 0, caution: 1, warning: 2, danger: 3 };
+const PARENT_CHANNEL = "guardian-parent-v1";
 
 const COLORS = {
   safe:    { shield: "#94a3b8", card: null },
@@ -316,6 +317,22 @@ function Demo() {
 
       if (rank > THREAT_RANK[highestLevel.current]) highestLevel.current = level;
       setShieldLevel(prev => rank > THREAT_RANK[prev] ? level : prev);
+
+      // broadcast to parent dashboard
+      if (rank >= 2) {
+        try {
+          new BroadcastChannel(PARENT_CHANNEL).postMessage({
+            type: "guardian-alert",
+            payload: {
+              level,
+              snippet: text.length > 80 ? text.slice(0, 80) + "…" : text,
+              signals: analysis.signals || [],
+              pattern_reasoning: analysis.pattern_reasoning || "",
+              guardian_note: analysis.guardian_note || "",
+            },
+          });
+        } catch {}
+      }
 
       const showCard    = rank >= 2 && rank > highestShown.current;
       const showRepeat  = rank >= 2 && rank <= highestShown.current;
